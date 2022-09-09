@@ -1,0 +1,305 @@
+---
+title: "Chapter 2"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidytext)
+
+# in the book a different dataset is the result
+# nrc and bing data are dichotomous data (positive, negative)
+# the AFINN lexicon has got -5 to 5 scores for positive or 
+# negative sentiment
+sentiments
+
+get_sentiments("afinn")
+```
+```{r}
+library(janeaustenr)
+library(dplyr)
+library(stringr)
+
+tidy_books <- austen_books() %>% 
+  group_by(book) %>% 
+  mutate(linenumber = row_number(),
+         chapter = cumsum(str_detect(text, regex("^chapter [\\divxlc]",
+                                                 ignore_case = TRUE)))) %>% 
+  ungroup() %>% 
+  # word is the output column and text the input
+  # call the output column word so that the joins
+  # with the lexicons will work on their shared variable
+  # word
+  unnest_tokens(word, text)
+
+nrcjoy <- get_sentiments("nrc") %>% 
+  filter(sentiment == "joy")
+
+tidy_books %>% 
+  filter(book == "Emma") %>% 
+  inner_join(nrcjoy) %>% 
+  count(word, sort = TRUE)
+```
+The %/% operator does integer division (x %/% y is equivalent to floor(x/y)) so the index keeps track of which 80-line section of text we are counting up negative and positive sentiment in.
+
+```{r}
+library(tidyr)
+
+janeaustensentiment <- tidy_books %>% 
+  # match the words in the our data to the words in bing
+  inner_join(get_sentiments("bing")) %>% 
+  # create a new var "n" which
+  # variables chapter and word will be lost after this
+  # we count the sentiment (positive/negative) within one equal value of the computed index
+  count(book, index = linenumber %/% 80, sentiment) %>% 
+  # split sentiment, new columns named after the options in sentiment
+  # the value to put in are the ones in n
+  # if there is no value then 0 is filled in
+  spread(sentiment, n, fill = 0) %>% 
+  # create a new variable sentiment which is the 
+  # negative and positiv computed
+  mutate(sentiment = positive - negative)
+
+library(ggplot2)
+
+# each column is the generated x (80 lines of a book)
+# fill = book, will just assign different colors to the different books
+ggplot(janeaustensentiment, aes(index, sentiment, fill = book)) +
+  # column diagramm, without the legend
+  geom_col(show.legend = FALSE) +
+  # free x means that any x is valid for the x axis, this is needed 
+  # as the different books are different in length
+  # then split into individual pots depending on the book
+  # using facet_wrap, 2 plots per 2 columns of 
+  facet_wrap(~book, ncol = 2, scales = "free_x")
+
+```
+
+# Comparison of the lexicons
+
+```{r}
+# fiiter based for pride and prejudice
+pride_prejudice <- tidy_books %>% filter(book == "Pride & Prejudice")
+pride_prejudice
+
+
+afinn <- pride_prejudice %>%
+  # get the sentiment of pride with afinn
+  inner_join(get_sentiments("afinn")) %>%
+  # create a new var "index" and group the data based on that
+  group_by(index = linenumber %/% 80) %>%
+  # based on the index we sum up the value or sentiment and put it into a new 
+  # variable "sentiment
+  summarise(sentiment = sum(value)) %>%
+  # add a new column "method" filled with AFINN
+  mutate(method = "AFINN")
+
+# bind rows because we have to datasets and want to combine them
+bing_and_nrc <- bind_rows(
+  # first data, bing
+  pride_prejudice %>%
+    # get the sentiment from bing, using an inner_join (matching the tokes(words))
+    inner_join(get_sentiments("bing")) %>%
+    # add the method column
+    mutate(method = "Bing et al."),
+  # second data, nrc
+  pride_prejudice %>%
+    # get the sentiment using word matching with the nrc dataset
+    inner_join(get_sentiments("nrc") %>%
+                 # in nrc there are more than just positive and negative sentiment
+                 # so we filter for this 
+                 filter(sentiment %in% c("positive",
+                                         "negative"))) %>%
+    # add the method column
+    mutate(method = "NRC")) %>%
+  # count within the method, distinguish between the two methods and not 
+  # count on the same index
+  # we get the sum of the sentiment as an "n" variable
+  # based on the defined index, computed from linenumber (80 lines = 1 index)
+  count(method, index = linenumber %/% 80, sentiment) %>%
+  # superseded with pivot_wider()
+  # separate sentiment and n
+  # sentiment provides the key (in this positiv and negtive)
+  # and then fill in the values of the n. If there is no value fill in 0
+  spread(sentiment, n, fill = 0) %>%
+  # create a new variable sentiment for each index (80 lines)
+  # by substracting positive from negative sentiment within the index
+  mutate(sentiment = positive - negative)
+
+# then we combine our two different dataframes using bind_rows
+# and plot it using ggplot
+bind_rows(afinn,
+          bing_and_nrc) %>%
+  # x = index, sentiment = y, fill gives each method a different color
+  ggplot(aes(index, sentiment, fill = method)) +
+  # we use a column diagramm and dont show the legend
+  geom_col(show.legend = FALSE) +
+  # separate the graph into how many mehtods there are
+  # one column
+  # and because there are the same amount of 80 line chunks we have a static x
+  # but we have different high sentiment that is why we need the free y axis
+  facet_wrap(~method, ncol = 1, scales = "free_y")
+```
+```{r}
+# comparing the positive and negative sentiment of the differnet datasets
+# there are different percentages of positive words in the datasets
+
+get_sentiments("nrc") %>%
+     filter(sentiment %in% c("positive",
+                             "negative")) %>%
+  count(sentiment)
+
+get_sentiments("bing") %>%
+  count(sentiment)
+```
+
+
+```{r}
+# get how often a word is in our data
+# and what the sentiment in it is 
+bing_word_counts <- tidy_books %>%
+  inner_join(get_sentiments("bing")) %>%
+  count(word, sentiment, sort = TRUE) %>%
+  ungroup()
+
+bing_word_counts
+
+# plot our findings of the frequencies 
+bing_word_counts %>%
+  # group our data based on positive/negative
+  group_by(sentiment) %>%
+  # within our grouped data, so of the negative and positive
+  # only the top 10
+  top_n(10) %>%
+  # leave the group
+  ungroup() %>%
+  # reorders the word column based on how often the word accors 
+  # reorder returns a vector of the input (word) reordered based on n
+  mutate(word = reorder(word, n)) %>%
+  # plotting
+  ggplot(aes(word, n, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~sentiment, scales = "free_y") +
+  # custom labels 
+  labs(y = "Contribution to sentiment",
+       x = NULL) +
+  # flips the chart 
+  coord_flip()
+```
+```{r}
+# miss is wrongly coded as negative. 
+# in the literature however it is the title of a joung lady
+# put it into a custom stop word list
+# we just put our own stop words in with bindrows
+custom_stop_words <- bind_rows(data_frame(word = c("miss"),
+                                          lexicon = c("custom")),
+                               stop_words)
+
+custom_stop_words
+```
+
+Wordclouds
+
+```{r}
+library(reshape2)
+library(wordcloud)
+
+tidy_books %>%
+  # remove the stopwords using anti_join
+  # anti_join drops everything that is in both datasets and therefore 
+  # drops all the stopwords from our tokens
+  anti_join(stop_words) %>%
+  # count how often a word occurs, will add var "n"
+  count(word) %>%
+  # with is an evaluation of a function
+  # we give this our dataframe and therefore can access the word column
+  # based and with n our frequencies 
+  with(wordcloud(word, n, max.words = 100))
+
+tidy_books %>%
+  inner_join(get_sentiments("bing")) %>%
+  count(word, sentiment, sort = TRUE) %>%
+  acast(word ~ sentiment, value.var = "n", fill = 0) %>%
+  comparison.cloud(colors = c("gray20", "gray80"),
+                   max.words = 100)
+
+```
+
+Beyond one word tokenization
+
+```{r}
+PandP_sentences <- data_frame(text = prideprejudice) %>%
+  # tokens = , will determine the dimension of the tokens created in the sentence 
+  # column based on text
+  unnest_tokens(sentence, text, token = "sentences")
+
+PandP_sentences$sentence[6]
+# utf-8 encoded, better in ASCII
+# maybe use iconv()
+# iconv(text, to = 'latin1')
+```
+unnest_tokens using a regex pattern to tokenize by chapter
+```{r}
+austen_chapters <- austen_books() %>%
+  group_by(book) %>%
+  # here we use a regex to unnest the chapters.
+  # so one token will be one chapter
+  unnest_tokens(chapter, text, token = "regex",
+                pattern = "Chapter|CHAPTER [\\dIVXLC]") %>%
+  ungroup()
+
+# countes the books
+austen_chapters %>%
+  # group based on books
+  group_by(book) %>%
+  # in the summarized data we sum up the chapters
+  summarise(chapters = n())
+
+```
+
+```{r}
+# see which of the chapters from any austen book has the most negative words
+
+
+# create a dataframe with only the negative words from the bing data
+bingnegative <- get_sentiments("bing") %>%
+  filter(sentiment == "negative")
+
+#absolute wordcount of each book
+wordcounts <- tidy_books %>%
+  # group by book and chapter
+  group_by(book, chapter) %>%
+  summarize(words = n())
+
+tidy_books %>%
+  # filters rows from tidy_books based on bingnegative
+  semi_join(bingnegative) %>%
+  # group the data first on book and then on chapter
+  group_by(book, chapter) %>%
+  # creates a new varaible that is called negativewords 
+  # still dont know what is n()
+  # summs up the word count in all the chapters
+  # beacuse our data is grouped (or rather we give it a grouped copy)
+  # we summarize each group (chapter of a book)
+  summarize(negativewords = n()) %>%
+  # adds columns based on y to x
+  # x is our datafame
+  # y is wordcounts
+  # the by arguement tels the function based on what they should join,
+  # will match both variables in both datasets
+  # so we just append the contents of wordcounts to the right side of 
+  # our x
+  left_join(wordcounts, by = c("book", "chapter")) %>%
+  # add a new ratio column
+  mutate(ratio = negativewords/words) %>%
+  # control for the preface or anything like that 
+  filter(chapter != 0) %>%
+  # returns the chapter and book with the highes negative word count
+  top_n(1) %>%
+  # ungroup the data
+  ungroup()
+```
+

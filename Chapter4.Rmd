@@ -1,0 +1,399 @@
+---
+title: "Chapter4"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+#load libraries
+library(dplyr)
+library(tidytext)
+library(janeaustenr)
+
+austen_bigrams <- austen_books() %>% 
+  # unnest the tokens by this time we take ngrams, here with
+  # two words per ngram
+  unnest_tokens(bigram, text, token = "ngrams", n = 2)
+# organized as one token per row, still variation of tidy text format
+# however here the token are 2 words
+austen_bigrams
+
+austen_bigrams %>% 
+  # count how often a specific bigram is in the data
+  # creates a new column "n"
+  count(bigram, sort = TRUE)
+```
+
+
+```{r}
+# split the bigrams into to column with word1 and word2 so we
+# can remove stopwords with anti_join
+
+library(tidyr)
+
+bigrams_separated <- austen_bigrams %>% 
+  # separate the variable bigram into the two variables
+  # defined in the vector
+  # and the indikator for separation is a space
+  separate(bigram, c("word1", "word2"), sep = " ")
+
+#ok its filter not antijoin, I am wondering if anti join also works or not
+bigrams_filtered <- bigrams_separated %>% 
+  # filter for cases where one of our words is a stopword
+  filter(!word1 %in% stop_words$word) %>% 
+  filter(!word2 %in% stop_words$word)
+
+#new bigram counts:
+bigram_counts <- bigrams_filtered %>% 
+  # count how often there is the combination of word1 and 
+  # two in our data
+  count(word1, word2, sort = TRUE)
+
+bigram_counts
+
+```
+
+
+```{r}
+bigrams_united <- bigrams_filtered %>% 
+  # unite into the first specified
+  # the two following variables
+  # with a specified separators 
+  unite(bigrams, word1, word2, sep = " ")
+
+bigrams_united
+```
+
+
+```{r}
+# somehow in the book there is no NA's maybe the code worked differently when the book was written
+
+austen_books() %>% 
+  # unnest to trigrams
+  unnest_tokens(trigram, text, token = "ngrams", n = 3) %>%
+  # separate them
+  separate(trigram, c("word1", "word2", "word3"), sep = " ") %>% 
+  # filter for stopwords
+  filter(!word1 %in% stop_words$word,
+         !word2 %in% stop_words$word,
+         !word3 %in% stop_words$word) %>% 
+  # get the count of how often each combination is present
+  count(word1, word2, word3, sort = TRUE)
+```
+```{r}
+# most common streets mentioned in the book
+
+bigrams_filtered %>% 
+  # filter the data for street in word2
+  filter(word2 == "street") %>% 
+  # count how often the street is mentioned in each book
+  count(book, word1, sort = TRUE)
+
+```
+
+
+```{r}
+bigram_tf_idf <- bigrams_united %>% 
+  # get the "n" var based on each book and how often the
+  # given bigram occurs in the book (groups the data in the back)
+  count(book, bigrams) %>% 
+  # get the tf, idf, tf_idf of the bigrams
+  bind_tf_idf(bigrams, book, n) %>% 
+  # arrange the dataset based on the descending ordered
+  # tf_idf
+  arrange(desc(tf_idf))
+
+bigram_tf_idf
+```
+
+bigrams are good for very big text datasets
+
+Sentiment on bigrams
+```{r}
+bigrams_separated %>% 
+  # filter the data for negated (positiv turned negative)
+  # statements
+  filter(word1 == "not") %>% 
+  # count the occurences of each negated bigram
+  count(word1, word2, sort = TRUE)
+```
+
+```{r}
+AFINN <- get_sentiments("afinn")
+
+AFINN
+
+not_words <- bigrams_separated %>% 
+  # filter for negated
+  filter(word1 == "not") %>% 
+  # by is the vector to join the data by
+  # what means the equal in the vecotr 
+  inner_join(AFINN, by = c(word2 = "word")) %>% 
+  # count the occurences of the word2 with the 
+  # gives back individual dataframe
+  count(word2, value, sort = TRUE) %>% 
+  # ungroup the data (count groups data in the back)
+  ungroup()
+
+not_words
+```
+
+
+```{r}
+not_words %>% 
+  # get the contribution of how much did negations falsely 
+  # got put into psoitive and vice versa
+  mutate(contribution = n * value) %>% 
+  # arrange the dataset based on the descending absolut
+  # contribution
+  # the absolute of the contribution does not get put into
+  # the column but is only used to order
+  arrange(desc(abs(contribution))) %>% 
+  # get the top 20 wrongly associated words
+  head(20) %>% 
+  # reoreder the word2 var based on their contribution
+  mutate(word2 = reorder(word2, contribution)) %>% 
+  # plot the whole thing
+  # color the variables which are greater than 0 different
+  ggplot(aes(word2, n * value, fill = n * value > 0)) +
+  geom_col(show.legend = FALSE) +
+  xlab("Words preceded \"not\"") +
+  ylab("Sentiment score * number of occurrences") +
+  coord_flip()
+```
+
+
+```{r}
+# custom negation words
+negation_words <- c("not", "no", "never", "without")
+
+negated_words <- bigrams_separated %>% 
+  # filter for cases which were negated
+  filter(word1 %in% negation_words) %>% 
+  # join the two dataframes on the occurences where
+  # word2 in the first dataframe equals the word column in the second
+  inner_join(AFINN, by = c(word2 = "word")) %>% 
+  # count the how often these pairs appear and ungroup the data afterwards
+  count(word1, word2, value, sort = TRUE) %>% 
+  ungroup()
+
+# plotting code missing 
+# with this method we could reverse some of the sentiment and get a more 
+# accurate score for the books i guess
+
+
+```
+
+```{r}
+library(igraph)
+
+bigram_counts
+
+bigram_graph <- bigram_counts %>% 
+  # filter for the words which occur more than 20 times
+  filter(n > 20) %>% 
+  # creates the igraph
+  graph_from_data_frame()
+
+bigram_graph
+```
+
+
+```{r}
+library(ggraph)
+# this sets the seed to the year the book was written in
+set.seed(2017)
+# plotting
+ggraph(bigram_graph, layout = "fr") +
+  # this is the line between the points
+  geom_edge_link() +
+  # is the round point at the node
+  geom_node_point() +
+  # this configures the names of the nodes
+  geom_node_text(aes(label = name), vjust = 1, hjust = 1)
+```
+
+NOTE
+Note that this is a visualization of a Markov chain, a common model in text processing. In a Markov chain, each choice of word depends only on the previous word. In this case, a random generator following this model might spit out “dear,” then “sir,” then “william/walter/thomas/thomas’s” by following each word to the most common words that follow it. To make the visualization interpretable, we chose to show only the most common word-to-word connections, but one could imagine an enormous graph representing all connections that occur in the text.
+```{r}
+#different seed
+set.seed(2016)
+
+# creates our arrow object to be used as links between the nodes, or styles it 
+a <- grid::arrow(type = "closed", length = unit(.15, "inches"))
+
+ggraph(bigram_graph, layout = "fr") +
+  # use our arrow, design the endcap
+  geom_edge_link(aes(edge_alpha = n), show.legend = FALSE,
+                 arrow = a, end_cap = circle(.07, 'inches')) +
+  # sets the color and the size of the point
+  geom_node_point(color = "lightblue", size = 5) +
+  # styles the text
+  geom_node_text(aes(label = name), vjust = 1, hjust = 1) +
+  # choose a theme 
+  theme_void()
+```
+
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(tidytext)
+library(ggplot2)
+library(igraph)
+library(ggraph)
+
+# this is how you define a function in R!!!! Finnally 
+# generall function to for unnesting, separating, filter, counting
+count_bigrams <- function(dataset) {
+  dataset %>%
+    unnest_tokens(bigram, text, token = "ngrams", n = 2) %>%
+    separate(bigram, c("word1", "word2"), sep = " ") %>%
+    filter(!word1 %in% stop_words$word,
+           !word2 %in% stop_words$word) %>%
+    count(word1, word2, sort = TRUE)
+}
+# generall function to get the arrow graph
+visualize_bigrams <- function(bigrams) {
+  set.seed(2016)
+  a <- grid::arrow(type = "closed", length = unit(.15, "inches"))
+
+  bigrams %>%
+    graph_from_data_frame() %>%
+    ggraph(layout = "fr") +
+    geom_edge_link(aes(edge_alpha = n), show.legend = FALSE, arrow = a) +
+    geom_node_point(color = "lightblue", size = 5) +
+    geom_node_text(aes(label = name), vjust = 1, hjust = 1) +
+    theme_void()
+}
+```
+
+```{r}
+library(gutenbergr)
+
+kjv <- gutenberg_download(10, mirror = "http://www.mirrorservice.org/sites/ftp.ibiblio.org/pub/docs/books/gutenberg")
+```
+
+```{r}
+library(stringr)
+
+# use the bevor definded functions
+
+kjv_bigrams <- kjv %>%
+  count_bigrams()
+
+# filter out rare combinations, as well as digits
+kjv_bigrams %>%
+  filter(n > 40,
+         !str_detect(word1, "\\d"),
+         !str_detect(word2, "\\d")) %>%
+  visualize_bigrams()
+
+```
+
+
+```{r}
+austen_section_words <- austen_books() %>%
+  # select only pride and prejudice
+  filter(book == "Pride & Prejudice") %>%
+  # defince a section as 10 rows, get the row number and do 
+  # an integer division (no floatingpoint numbers)
+  # allways takes the lower bound so until 10 %/% 10 its 0 
+  # and soforth
+  mutate(section = row_number() %/% 10) %>%
+  # filter for the sections past the first 1o lines,
+  # exclude metadata basically
+  filter(section > 0) %>%
+  unnest_tokens(word, text) %>%
+  # filter for stop words
+  # can also use anti_join for this
+  filter(!word %in% stop_words$word)
+
+austen_section_words
+
+
+```
+
+```{r}
+library(widyr)
+
+# count words co-occuring within sections
+word_pairs <- austen_section_words %>%
+  # word is the item column 
+  # the feature option, here section defines the space in
+  # which the pairs should be counted
+  pairwise_count(word, section, sort = TRUE)
+
+word_pairs
+```
+
+```{r}
+word_pairs %>% 
+  # returns a table in which the first item is only darcy
+  filter(item1 == "darcy")
+```
+
+correlation among words
+-> which indicates how often they appear together to how often they appear separately
+(focus phi coefficient, how much more likely it is that either both word X and Y appear, or neither do, than that one appears without the other)
+```{r}
+# we need to filter for at least relatively common words first
+word_cors <- austen_section_words %>%
+  # retruns a copy of the table which is put into different
+  # ones based on the defined group
+  group_by(word) %>%
+  # filter based on the number of rows in each group,
+  # exclude the groups which do not have 20 or more rows
+  # (cases)
+  # so we exclude the words which do not have 20 or more
+  # occurences
+  filter(n() >= 20) %>%
+  # get the pairwiase correlation in each section
+  pairwise_cor(word, section, sort = TRUE)
+
+word_cors
+
+
+word_cors %>%
+  # retrun the data where item1 is pounds
+  filter(item1 == "pounds")
+```
+
+```{r}
+word_cors %>%
+  # only keep cases which have elizabeth, punds, married, pride
+  # as the first item
+  filter(item1 %in% c("elizabeth", "pounds", "married", "pride")) %>%
+  # put them into 4 groups
+  group_by(item1) %>%
+  # select the top 6 in each
+  top_n(6) %>%
+  ungroup() %>%
+  # reorder the second item based on the correlation
+  # and then set write that into the second item
+  mutate(item2 = reorder(item2, correlation)) %>%
+  # plotting
+  ggplot(aes(item2, correlation)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~ item1, scales = "free") +
+  coord_flip()
+
+# seed
+set.seed(2016)
+# relationships not directional
+# they are correlations
+word_cors %>%
+  # only select cases with more than 0.15 corr
+  filter(correlation > .15) %>%
+  # plotting
+  graph_from_data_frame() %>%
+  ggraph(layout = "fr") +
+  geom_edge_link(aes(edge_alpha = correlation), show.legend = FALSE) +
+  geom_node_point(color = "lightblue", size = 5) +
+  geom_node_text(aes(label = name), repel = TRUE) +
+  theme_void()
+```
+

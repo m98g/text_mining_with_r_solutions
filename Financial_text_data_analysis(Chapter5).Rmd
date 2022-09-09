@@ -1,0 +1,402 @@
+---
+title: "Chapter5"
+output: html_document
+---
+Converting to and from Nontidy Formats
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+often text mining works with 
+DTM - document-term matrix
+each row represent one document
+each column represents one term
+each value contains the number of appearances of that term in that document.
+
+Tidying DocumentTerMMatrix Objects
+```{r}
+library(tm)
+# get our test data from the package topicmodels 
+# give it the variable name AssociatedPress
+data("AssociatedPress", package = "topicmodels")
+AssociatedPress
+```
+
+```{r}
+# write in the term data from the document term matrix
+# get
+terms <- Terms(AssociatedPress)
+# get the first few items
+head(terms)
+
+```
+
+```{r}
+library(dplyr)
+library(tidytext)
+
+# cast the Dtm "AssociatedPress into the tidy format with
+# one term per row and one varaible per column
+ap_td <- tidy(AssociatedPress)
+ap_td
+
+# in the tidy output the zeros (of the sparse matrix) are 
+# omitted
+
+```
+
+
+```{r}
+ap_sentiments <- ap_td %>%
+  # we join on the bing lexicon 
+  # so we match the words in out now tidy dataframe 
+  # on the term column in ap_td and on word in
+  # bing
+  inner_join(get_sentiments("bing"), by = c(term = "word"))
+
+ap_sentiments
+```
+
+
+```{r}
+library(ggplot2)
+
+ap_sentiments %>%
+  # groups the content based on sentiment and term
+  # will add a column named "n"
+  count(sentiment, term, wt = count) %>%
+  # ungroup the data
+  ungroup() %>%
+  # take only words which had more than 200 occurences
+  filter(n >= 200) %>%
+  # override the existing n 
+  # this tests if the sentiment in the coresponding is 
+  # negativ if so the test is true and the value will
+  # be wrote in as negative and if its false
+  # then the value stays positive
+  mutate(n = ifelse(sentiment == "negative", -n, n)) %>%
+  # reorder the term column based on the values of n
+  # and then set the reordered vector equal to the
+  # existing term variable
+  mutate(term = reorder(term, n)) %>%
+  # term x value
+  # n y value
+  # color the different sentiment
+  ggplot(aes(term, n, fill = sentiment)) +
+  # overrides the default behavior of the bar graph
+  # leaves the data as it is ?
+  geom_bar(stat = "identity") +
+  # label the y axis
+  ylab("Contribution to sentiment") +
+  # flit the chart on the side
+  coord_flip()
+```
+
+Tidying dfm Objects
+```{r}
+library(methods)
+# get new data from the quantedapackage
+# dataframe name here is data_corpus_inaugural
+data("data_corpus_inaugural", package = "quanteda")
+# we then cast it as a document feature matrix
+# for this we use the quantedapackage and the fucntion dfm
+# from it
+# verbose means to display messages or not
+inaug_dfm <- quanteda::dfm(data_corpus_inaugural, verbose = FALSE)
+
+inaug_dfm
+# cast the document feature matrix into a tidy format
+inaug_td <- tidy(inaug_dfm)
+inaug_td
+```
+
+
+```{r}
+inaug_tf_idf <- inaug_td %>%
+  # get the tf_idf metrics from the tidy data
+  # term is the column containing our text
+  # documents is the column for doc ids 
+  # count is the count for each word
+  bind_tf_idf(term, document, count) %>% 
+  # arrange the dataframe based on the descending tf_idf
+  # so the terms very important (at least in theory) are at
+  # the top
+  arrange(desc(tf_idf))
+
+inaug_tf_idf
+```
+
+
+```{r}
+library(tidyr)
+
+year_term_counts <- inaug_td %>% 
+  # we take the document column
+  # name it year
+  # then search for the number string withing
+  # using the regular expression "(\\d+)"
+  # dont know what convert means
+  # probably something from string to number
+  extract(document, "year", "(\\d+)", convert = TRUE) %>% 
+  # complete a data frame with missing combinations of data
+  # if there is a combination of year and term which is
+  # neverhappening we fill the data with count 0 
+  # instead of NA
+  complete(year, term, fill = list(count = 0)) %>% 
+  # group on year
+  group_by(year) %>% 
+  # bind new column with the maximum word count of each year
+  mutate(year_total = sum(count))
+
+year_term_counts %>%
+  # filter the data for specific terms 
+  filter(term %in% c("god", "america", "foreign",
+                     "union", "constitution", "freedom")) %>%
+  # x year, y is the count of the word as part of the total 
+  # year words
+  ggplot(aes(year, count / year_total)) +
+  # point graph
+  geom_point() +
+  # adds a overall direction of the words or rather a
+  # graph line through the points
+  geom_smooth() +
+  # divide on the terms
+  # free y axis
+  facet_wrap(~ term, scales = "free_y") +
+  # set the sacle of y to continuous, but is the default
+  # this sets the y axis into the percent format
+  scale_y_continuous(labels = scales::percent_format()) +
+  # y label
+  ylab("% frequency of word in inaugural address")
+```
+
+```{r}
+# dont know what this was supposed to teach me 
+ap_td %>%
+  cast_dtm(document, term, count)
+
+ap_td %>%
+  cast_dfm(term, document, count)
+```
+
+
+```{r}
+library(Matrix)
+
+# cast into a Matrix object
+
+m <- ap_td %>% 
+  cast_sparse(document, term, count)
+
+class(m)
+```
+
+
+```{r}
+# retrieve the dimensions of an object
+dim(m)
+```
+
+
+```{r}
+library(janeaustenr)
+
+austen_dtm <- austen_books() %>% 
+  # tokenization, here single word
+  unnest_tokens(word, text) %>% 
+  # count how often a word is mentioned in a book
+  count(book, word) %>% 
+  # now we convert the data to a document term matrix
+  cast_dtm(book, word, n)
+
+austen_dtm
+```
+
+"Some data structures are designed to store document collections before tokenization, often called a "corpus"."
+```{r}
+data("acq")
+acq[[1]]
+
+acq_td <- tidy(acq)
+acq_td
+```
+
+```{r}
+acq_tokens <- acq_td %>% 
+  # select everything except palaces
+  # essentially drop the variable
+  select(-places) %>% 
+  # unnest tokens with the origin col text
+  # and the target col word
+  unnest_tokens(word, text) %>% 
+  # remove stop words
+  anti_join(stop_words, by = "word")
+
+# most common words
+acq_tokens %>% 
+  # count the words
+  count(word, sort = TRUE)
+
+acq_tokens %>%
+  # count the words within the same id
+  count(id, word) %>%
+  # get the tf idf and tf_idf of each word within the same id
+  bind_tf_idf(word, id, n) %>%
+  # the highest tf_idf first then descending
+  arrange(desc(tf_idf))
+```
+
+## Example: Mining Financial Articles
+```{r}
+# set JAVA_HOME
+Sys.setenv(JAVA_HOME = "
+/Library/Java/JavaVirtualMachines/jdk-17.0.2.jdk/Contents/Home")
+library(tm.plugin.webmining)
+library(purrr)
+# companies to look for
+company <- c("Microsoft", "Apple", "Google", "Amazon", "Facebook",
+             "Twitter", "IBM", "Yahoo", "Netflix")
+# stock ticker symbol
+symbol <- c("MSFT", "AAPL", "GOOG", "AMZN", "FB", "TWTR", "IBM", "YHOO", "NFLX")
+# the function to download the texts
+download_articles <- function(symbol) {
+  WebCorpus(GoogleFinanceSource(paste0("NASDAQ:", symbol)))
+}
+
+# vielleicht hat google das ganze beendet
+# man erreicht die webseite zumindest nicht
+
+# anscheinend ist der Google zugang broken und das 
+#package wird nicht mehr aktiv supported
+
+# create dataframe
+stock_articles <- data_frame(company = company,
+                             symbol = symbol) %>%
+  # create a new column
+  # now apply each symbol to the download_atricles function
+  mutate(corpus = map(symbol, download_articles))
+
+stock_articles
+```
+
+
+```{r}
+stock_tokens <- stock_articles %>%
+  # we give every entry of the corpus to the tidy function
+  unnest(map(corpus, tidy)) %>%
+  # now we have got a text column in which 
+  # each text of the articles can be found 
+  # now we unnest the tokens 
+  unnest_tokens(word, text) %>%
+  # selet these variables and drop others
+  select(company, datetimestamp, word, id, heading)
+
+stock_tokens
+```
+
+
+```{r}
+library(stringr)
+
+stock_tf_idf <- stock_tokens %>%
+  # count the word based on the company
+  count(company, word) %>%
+  # detect in word a particular pattern 
+  # then filters for the negation of that pattern
+  filter(!str_detect(word, "\\d+")) %>%
+  # bind_tf_idf (term-frequency, inverse document frequency)
+  bind_tf_idf(word, company, n) %>%
+  # dont really know what this - means 
+  arrange(-tf_idf)
+```
+
+
+```{r}
+# sentiment for analysis of the stock market
+
+# !!! AFINN, BING, NRC ARE ALL NOT SUITED FOR FINANCIAL TEXT
+# DATA !!!
+stock_tokens %>%
+  # remove stop words
+  anti_join(stop_words, by = "word") %>%
+  # count we words within an id
+  count(word, id, sort = TRUE) %>%
+  # get sentiment from afinn, join by word
+  inner_join(get_sentiments("afinn"), by = "word") %>%
+  # group
+  group_by(word) %>%
+  # new col contribution that equals the sum 
+  # beacuse its grouped by word this means that
+  # the number of times it appears times the score 
+  # then add all up
+  summarize(contribution = sum(n * score)) %>%
+  # get top 12
+  # from the absolute contriobution (big negative, or positive)
+  top_n(12, abs(contribution)) %>%
+  # create a new word
+  # reorder word based on the contribtion
+  mutate(word = reorder(word, contribution)) %>%
+  # x = word, y = contribution
+  ggplot(aes(word, contribution)) +
+  # col graph
+  geom_col() +
+  # flip it on the side
+  coord_flip() +
+  # y-label
+  labs(y = "Frequency of word * AFINN score")
+
+```
+
+
+```{r}
+# use another lexicon called "loughran"
+stock_tokens %>%
+  # coount how often a word appears
+  count(word) %>%
+  # other sentiment lexicon
+  inner_join(get_sentiments("loughran"), by = "word") %>%
+  # group
+  group_by(sentiment) %>%
+  # get the top 5 mentioned words
+  top_n(5, n) %>%
+  # ungroup
+  ungroup() %>%
+  # reorder the word column based on n
+  mutate(word = reorder(word, n)) %>%
+  # plotting
+  ggplot(aes(word, n)) +
+  geom_col() +
+  coord_flip() +
+  # divde on diff sentiment, and free both x and y
+  facet_wrap(~ sentiment, scales = "free") +
+  # ylab
+  ylab("Frequency of this word in the recent financial articles")
+```
+
+```{r}
+stock_sentiment_count <- stock_tokens %>%
+  # get sentiment with the new lexicon
+  inner_join(get_sentiments("loughran"), by = "word") %>%
+  # count the sentiment based on the company
+  count(sentiment, company) %>%
+  # superceeded by pivot_wider
+  # sentiment as the key
+  # n as the value
+  # fill if there is no n 0
+  spread(sentiment, n, fill = 0)
+
+stock_sentiment_count
+
+tock_sentiment_count %>%
+  # recompute the score 
+  mutate(score = (positive - negative) / (positive + negative)) %>%
+  # reorder the company based on the score
+  mutate(company = reorder(company, score)) %>%
+  #plotting
+  ggplot(aes(company, score, fill = score > 0)) +
+  geom_col(show.legend = FALSE) +
+  coord_flip() +
+  labs(x = "Company",
+       y = "Positivity score among 20 recent news articles")
+```
+

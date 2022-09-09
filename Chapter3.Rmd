@@ -1,0 +1,292 @@
+---
+title: "Chapter3"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+## Analyzing Word and Document Frequency: tf-idf
+
+In this chapter we will explore how important a single word is
+to a document.
+
+tf - term frequency
+idf - inverse document frequency -- basically weights applied based on how often a word appears
+
+TF in Jane Austen
+```{r}
+library(dplyr)
+library(janeaustenr)
+library(tidytext)
+
+#load the austen books
+book_words <- austen_books() %>% 
+  # tokenization on word level
+  # one word per row
+  unnest_tokens(word, text) %>% 
+  # count how often a given word is in a book
+  count(book, word, sort = TRUE) %>% 
+  # the data is grouped and we ungroup it so we can 
+  # do operations on the whole dataset
+  ungroup()
+
+total_words <- book_words %>% 
+  # we group the data based on which book
+  group_by(book) %>% 
+  # gives us a dataframe with two variables, the book, and the total sum of words
+  summarize(total = sum(n))
+
+# we join our two dataframes 
+# so left join adds the column that is not in the left (x) dataset from the 
+# right dataset (y) in this case its the total word count and matches it to the
+# coresponding book
+book_words <- left_join(book_words, total_words)
+book_words
+#plotting
+library(ggplot2)
+
+# plotting the
+ggplot(book_words, aes(n/total, fill = book)) +
+  #histogram
+  geom_histogram(show.legend = FALSE)+
+  # NA is basically leaving the arguemnt empty
+  # this will take the limit from the data itself
+  # if the larger limit is given first reversed grpah, like its the case here
+  # o.0009 is the lower bound
+  # limits the bound if the x-axis
+  xlim(NA, 0.0009) +
+  # split the grpah based on the book with to columns of graphs and a free y axis
+  facet_wrap(~book, ncol = 2, scales = "free_y")
+``` 
+
+Zip's Law:
+Zipf’s law states that the frequency that a word appears is inversely proportional to its rank.
+
+```{r}
+freq_by_rank <- book_words %>% 
+  # group the data
+  group_by(book) %>% 
+  # we create two new variables (columns)
+  # first we compute a rank that is the row number,
+  # as this data is based on the frequnecy we get the rank, based on
+  # often a word appears in a given book
+  
+  # the seocnd variable is the percentage of how often the word
+  # appears compared to all the other words
+  mutate(rank = row_number(),
+         `term frequency` = n/total)
+
+freq_by_rank
+```
+
+
+```{r}
+# here we plot the term frequency
+freq_by_rank %>% 
+  # why has there to be these `` around term frequency... maybe its because of 
+  # the whitespace between
+  
+  # plot based on the rank on the x axis and frequency on the y axis
+  # color the individual books differently
+  ggplot(aes(rank, `term frequency`, color = book)) +
+  # line plot
+  # size
+  geom_line(size = 1.1, alpha = 0.8, show.legend = FALSE) +
+  scale_x_log10() +
+  scale_y_log10()
+```
+
+```{r}
+rank_subset <- freq_by_rank %>% 
+  filter(rank < 500,
+         rank > 10)
+
+lm(log10(`term frequency`) ~ log10(rank), data = rank_subset)
+```
+```{r}
+# with abline we can add another line in our graph with
+# parameters defined by us
+freq_by_rank %>%
+  ggplot(aes(rank, `term frequency`, color = book)) +
+  # add another line in the graph with fixed parameters
+  # linetype 2 is a dotted line
+  geom_abline(intercept = -0.62, slope = -1.1, color = "gray50", linetype = 2) +
+  # our type of graph
+  geom_line(size = 1.1, alpha = 0.8, show.legend = FALSE) +
+  # this scales the x and y axis to log10
+  scale_x_log10() +
+  scale_y_log10()
+
+```
+
+```{r}
+# how often a given word is in each book
+book_words <- book_words %>%
+  # calc term frequency and inverse document frequency
+  # then bind these two to the given dataframe
+  # in this case book_words
+  # as we store this again in book_words (override)
+  # we basically get two new columns
+  
+  # actually its three new vairables
+  # tf, idf, and tf_idf
+  bind_tf_idf(word, book, n)
+book_words
+```
+
+```{r}
+book_words %>%
+  # extraact a column as a table (basic function of select)
+  # so we give arrange only the one column ? 
+  # but what does the - mean
+  
+  # the - means everything but
+  # so we select everything but total and give this to 
+  # arrange
+  select(-total) %>%
+  # orders the data based on values of a selected column
+  
+  # desc orders the given vector (in this case or tf_idf)
+  # in descending order
+  
+  # we arrange our data based on a descending ordered tf_idf
+  # from big to smaller numbers
+  arrange(desc(tf_idf))
+```
+
+```{r}
+book_words %>%
+  # arrange the data based on a descending order of td_idf
+  arrange(desc(tf_idf)) %>%
+  # unique gives back the varaible word but without duplicates
+  # rev then reverses the vector given by unique
+  # factor encodes a vector as a factor
+  
+  # factors are often referred to as categorial variables
+  # in R factors are stored as int values with character 
+  # values attached
+  
+  # we add a new variable word, word or rather drop the old
+  # and add a new
+  
+# DONT REALLY GET THIS OR FOR WHAT ITS USED
+# or i get what is happening but why is it necessary
+  mutate(word = factor(word, levels = rev(unique(word)))) %>%
+ # group the data by book
+  group_by(book) %>%
+  # select only the top 15 of each
+  top_n(15) %>%
+  # ungroup the data, now only spaning the top 15 of each book
+  ungroup %>%
+  # plot the data
+  ggplot(aes(word, tf_idf, fill = book)) +
+  # column graph
+  geom_col(show.legend = FALSE) +
+  # add labels
+  labs(x = NULL, y = "tf-idf") +
+  # split into different graphs based on book 
+  # with free x and y
+  facet_wrap(~book, ncol = 2, scales = "free") +
+  # flip the charts
+  coord_flip()
+```
+
+```{r}
+
+library(gutenbergr)
+# id 5001 is broken excluded
+physics <- gutenberg_download(c(37729, 14725, 13476),mirror = "http://www.mirrorservice.org/sites/ftp.ibiblio.org/pub/docs/books/gutenberg", meta_fields = "author")
+```
+
+```{r}
+physics_words <- physics %>% 
+  # unnsest the words
+  # get our tidy data
+  # target column word
+  # origin is text column
+  unnest_tokens(word, text) %>% 
+  # create new var n
+  # sorted
+  # group by author and count how often the word appears then sort the results
+  count(author, word, sort = TRUE) %>% 
+  # the ungroup is needed because count
+  # groups the data based on author
+  ungroup()
+
+physics_words
+```
+
+plotting
+```{r}
+
+plot_physics <- physics_words %>%
+  # create three new columns
+  # term frequnecy, inverse document frequency and 
+  # tf_idf
+  bind_tf_idf(word, author, n) %>%
+  # arrange the data based on the descending order of td_idf
+  arrange(desc(tf_idf)) %>%
+  # again this command
+  mutate(word = factor(word, levels = rev(unique(word)))) %>%
+  # mutate the author variable 
+  mutate(author = factor(author, levels = c("Galilei, Galileo",
+                                            "Huygens, Christiaan",
+                                            "Tesla, Nikola")))
+
+plot_physics %>%
+  # group
+  group_by(author) %>%
+  # select the top 15 based on tf_idf
+  top_n(15, tf_idf) %>%
+  ungroup() %>%
+  # basically apply reorder based on word an tf_idf
+  # to the word column
+  mutate(word = reorder(word, tf_idf)) %>%
+  # plotting
+  ggplot(aes(word, tf_idf, fill = author)) +
+  geom_col(show.legend = FALSE) +
+  labs(x = NULL, y = "tf-idf") +
+  facet_wrap(~author, ncol = 2, scales = "free") +
+  coord_flip()
+```
+
+```{r}
+# does not work as we do not have the einstein text loaded
+library(stringr)
+
+physics %>%
+  filter(str_detect(text, "eq\\.")) %>%
+  select(text)
+
+physics %>%
+  filter(str_detect(text, "K1")) %>%
+  select(text)
+
+physics %>%
+  filter(str_detect(text, "AK")) %>%
+  select(text)
+
+mystopwords <- data_frame(word = c("eq", "co", "rc", "ac", "ak", "bn",
+                                   "fig", "file", "cg", "cb", "cm"))
+physics_words <- anti_join(physics_words, mystopwords, by = "word")
+plot_physics <- physics_words %>%
+  bind_tf_idf(word, author, n) %>%
+  arrange(desc(tf_idf)) %>%
+  mutate(word = factor(word, levels = rev(unique(word)))) %>%
+  group_by(author) %>%
+  top_n(15, tf_idf) %>%
+  ungroup %>%
+  mutate(author = factor(author, levels = c("Galilei, Galileo",
+                                            "Huygens, Christiaan",
+                                            "Tesla, Nikola",
+                                            "Einstein, Albert")))
+
+ggplot(plot_physics, aes(word, tf_idf, fill = author)) +
+  geom_col(show.legend = FALSE) +
+  labs(x = NULL, y = "tf-idf") +
+  facet_wrap(~author, ncol = 2, scales = "free") +
+  coord_flip()
+
+```
+

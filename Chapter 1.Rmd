@@ -1,0 +1,202 @@
+---
+title: "1. Chapter"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+# tidy text format
+# every variable is a column
+# each observation is a row
+# each type of obercational unit is a table
+
+# a table with one token per row
+# token = meaningful unit of text
+
+```{r}
+text <- c("Because I could not stop for Death -",
+          "He kindly stopped for me -",
+          "The Carriage held but just Ourselves -",
+          "and Immortality")
+
+library(dplyr)
+# data_frame is depreciated now it is tibble()
+text_df <- tibble(line = 1:4, text = text)
+text_df
+
+library(tidytext)
+
+# unnest tokens splits the text in the text column within the text_df into tokens and puts them in the newly defined "word" column
+# the default will split into sinlge words
+# punctuation stripped
+# default will convert to lowercase
+# to_lowercase arguement = False to change
+text_df %>% unnest_tokens(word, text)
+```
+```{r}
+# Jane Austen
+
+library(janeaustenr)
+library(dplyr)
+library(stringr)
+
+# wir geben die austenbücher an group_by welches den dataframe splittet in die einzelnen bücher. Dadurch können wir z.b. die line nummer von jedem Buch einzeln einlesen und haben nicht das Problem von komplett fortlaufenden Zeilennummern
+
+# the regex detects the chapter number 
+# it matches strings that are chapter (with ignored case) and any number
+# the grouped data is then given to the mutate command which will add two other variabls linenumber, which is just the row number as this is the format of the Janeausten books, and the chapter number which is detected using regular expression
+# afterwards everything is ungrouped 
+# The grouping is used so that we do not have consecutive line numbers statring with the first book, but starting with each individual book
+# at first we have seperated data and then merge it back using the ungroup() function
+
+# cumsum, returns a vector of with the element beeing the cumulative sum of the of the elements of the argument
+
+# str_decect gets the text column as a vector
+# and then the pattern to match is defined ussing regex
+# so regex does no matching but builds the pattern to match for in text and str_decect does the matching
+
+original_books <- austen_books() %>% 
+  group_by(book) %>% 
+  mutate(linenumber = row_number(),
+         chapter = cumsum(str_detect(text, regex("^chapter [\\divxlc]",                                   ignore_case = TRUE)))) %>%  ungroup()
+
+original_books
+
+library(tidytext)
+tidy_books <- original_books %>% unnest_tokens(word, text)
+
+tidy_books
+# "The default tokenizing is for words, but other options include characters, n-grams, sentences, lines, paragraphs, or separation around a regex pattern." 
+# now tidy_tools can be applied
+
+# reads in a promise called stop_words, its the result of a function that is temporarily stored and used up after it is called
+data(stop_words)
+# clear for stop_words
+tidy_books <- tidy_books %>% anti_join(stop_words)
+tidy_books
+
+# most common words
+# will also be retruned in tidy_format
+tidy_books %>%  count(word, sort = TRUE)
+
+# pipe to ggplot2
+library(ggplot2)
+
+# we take our data pass it to the count function
+# this is then filtered for anything above 600 hits
+# this data is then passed to the reorder function
+# to sort the data 
+tidy_books %>%
+  count(word, sort = TRUE) %>%
+  filter(n > 600) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(word, n)) +
+  geom_col() +
+  xlab(NULL) +
+  coord_flip()
+```
+## Gutenberg Package
+```{r}
+library(gutenbergr)
+
+# gutenberg mirrors: https://www.gutenberg.org/MIRRORS.ALL
+
+meta <- gutenberg_metadata
+
+hgwells <- gutenberg_download(c(35, 36, 5230, 159), mirror = "http://mirrors.xmission.com/gutenberg/")
+data(stop_words)
+tidy_hgwells <- hgwells %>%
+  unnest_tokens(word, text) %>%
+  anti_join(stop_words)
+
+tidy_hgwells %>%
+  count(word, sort = TRUE)
+
+bronte <- gutenberg_download(c(1260, 768, 969, 9182, 767), mirror = "http://mirrors.xmission.com/gutenberg/")
+
+tidy_bronte <- bronte %>%
+  unnest_tokens(word, text) %>%
+  anti_join(stop_words)
+
+tidy_bronte %>%
+  count(word, sort = TRUE)
+```
+
+```{r}
+library(tidyr)
+
+# this code is useful to compare the frequencies of words in one set of works
+# (here Jane Austen) to the frequencies of the same words in different
+# set of works here Wells and Bronte
+
+# bind_rows combines dataframes into one, first tho we create a new column
+# that is named author in each dataframe and put in the author
+frequency <- bind_rows(mutate(tidy_bronte, author = "Bronte Sisters"),
+                       mutate(tidy_hgwells, author = "H.G. Wells"),
+                       mutate(tidy_books, author = "Jane Austen")) %>% 
+  # this str_extract is to control for itallics or something similar, dont
+  # want *any* and any to be different words
+  
+  #then we mutate the column word and give only back the words which the 
+  # str_extract function matches
+  mutate(word = str_extract(word, "[a-z']+")) %>% 
+  # creates new column "n" in which each word in the dataset gets put their
+  # frequency based on the author
+  count(author, word) %>%
+  # we seperate the data into the different authors again
+  group_by(author) %>% 
+  # we create in each dataframe a variable that is reflective of how much
+  # of the text equals the given word
+  mutate(proportion = n / sum(n)) %>%
+  # selects variables in a dataframe based on the condition
+  # selects every variable except n -> -n means exclude n
+  select(-n) %>% 
+  # spread key value pair across multiple columns
+  # superseded by pivot_wider
+  # author is the key, proportion is the value
+  # spreads the data into the different options in author and put in the
+  # proportions of every value for the data in the word variable
+  spread(author, proportion) %>% 
+  # superseded by pivot_longer
+  # put the values of bronte and wells into one column called proportions
+  # and the names in a author variable
+  gather(author, proportion, `Bronte Sisters`:`H.G. Wells`)
+
+library(scales)
+#plotting
+
+# I ahve to get a book about ggplot this is to much
+
+# comparison of frequencies in text to text, e.g. Austen and Bronte
+# expect a warning about rows with missing values being removed
+ggplot(frequency, aes(x = proportion, y = `Jane Austen`,
+                      color = abs(`Jane Austen` - proportion))) +
+  geom_abline(color = "gray40", lty = 2) +
+  geom_jitter(alpha = 0.1, size = 2.5, width = 0.3, height = 0.3) +
+  geom_text(aes(label = word), check_overlap = TRUE, vjust = 1.5) +
+  scale_x_log10(labels = percent_format()) +
+  scale_y_log10(labels = percent_format()) +
+  scale_color_gradient(limits = c(0, 0.001),
+                       low = "darkslategray4", high = "gray75") +
+  facet_wrap(~author, ncol = 2) +
+  theme(legend.position="none") +
+  labs(y = "Jane Austen", x = NULL)
+```
+
+## Correlations
+```{r}
+# used for correlation analysis between different samples
+# one time for Bronte and one time for Wells
+
+# without the comma after Bronte the thing does not work ? why
+
+# the tilde is used to separate the right and left side of a 
+# function, usually used in lm()
+cor.test(data = frequency[frequency$author == "Bronte Sisters",],
+        ~ proportion + `Jane Austen`)
+
+cor.test(data = frequency[frequency$author == "H.G. Wells",],
+         ~ proportion + `Jane Austen`)
+```
+
